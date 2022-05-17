@@ -91,7 +91,10 @@ def onnx2nnet(onnxFile, inputMins=None, inputMaxes=None, means=None, ranges=None
             # Terminate once we find the outputName in the graph
             if outputName == inputName:
                 break
-           
+    
+    print("taking transpose of weights...")
+    weights = [np.transpose(w) for w in weights]
+
     # Check if the weights and biases were extracted correctly from the graph
     if outputName==inputName and len(weights)>0 and len(weights)==len(biases):
         
