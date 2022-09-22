@@ -3,8 +3,9 @@ import sys
 import onnx
 from onnx import numpy_helper
 from NNet.utils.writeNNet import writeNNet
+import copy
         
-def onnx2nnet(onnxFile, inputMins=None, inputMaxes=None, means=None, ranges=None, nnetFile="", inputName="", outputName=""):
+def onnx2nnet(onnxFile, inputMins=None, inputMaxes=None, means=None, ranges=None, nnetFile="", inputName="", outputName="", take_transpose=False):
     '''
     Write a .nnet file from an onnx file
     Args:
@@ -15,6 +16,7 @@ def onnx2nnet(onnxFile, inputMins=None, inputMaxes=None, means=None, ranges=None
         ranges: (list) optional, Range value for each input and value for range of all outputs, used for normalization
         inputName: (string) optional, Name of operation corresponding to input.
         outputName: (string) optional, Name of operation corresponding to output.
+        take_transpose: (Bool) optional, determines whether to take transpose of weights
     '''
     
     if nnetFile=="":
@@ -76,7 +78,44 @@ def onnx2nnet(onnxFile, inputMins=None, inputMaxes=None, means=None, ranges=None
                 
                 # Update inputName to be the output of this node
                 inputName = node.output[0]
-                
+            
+            elif node.op_type=="Gemm":
+                assert len(node.input) == 3
+                # check attributes for transpose
+                alpha = 1.0
+                beta = 1.0
+                transA = False
+                transB = False
+                for attr in node.attribute:
+                    if attr.name == "alpha":
+                        alpha = attr.f
+                    elif attr.name == "beta":
+                        beta = attr.f
+                    elif attr.name == "transA":
+                        transA = bool(attr.i)
+                    elif attr.name == "transB":
+                        transB = bool(attr.i)
+                        # honestly not sure what to do with this because the input has to have shape (n_features X batch_size)
+                # first node input is name of node
+                weightName = node.input[1]
+                biasName = node.input[2]
+                # get weights
+                weight = copy.deepcopy([numpy_helper.to_array(inits) for inits in graph.initializer if inits.name==weightName][0])
+                if transA:
+                    weight = weight.transpose()
+                weight *= alpha 
+                weights += [weight]
+                # get bias
+                if biasName in [i.name for i in graph.initializer]:
+                    bias = copy.deepcopy([numpy_helper.to_array(inits) for inits in graph.initializer if inits.name==biasName][0])
+                else: # bias is zeros 
+                    bias = np.zeros(weight.shape[0])
+                bias *= beta 
+                biases += [bias]
+
+                # Update inputName to be the output of this node
+                inputName = node.output[0]
+
             # For the .nnet file format, the Relu's are implicit, so we just need to update the input
             elif node.op_type=="Relu":
                 inputName = node.output[0]
@@ -92,8 +131,10 @@ def onnx2nnet(onnxFile, inputMins=None, inputMaxes=None, means=None, ranges=None
             if outputName == inputName:
                 break
     
-    print("taking transpose of weights...")
-    weights = [np.transpose(w) for w in weights]
+    if take_transpose:
+        # necessary for older networks that don't use Gemm
+        print("taking transpose of weights...")
+        weights = [np.transpose(w) for w in weights]
 
     # Check if the weights and biases were extracted correctly from the graph
     if outputName==inputName and len(weights)>0 and len(weights)==len(biases):
@@ -109,12 +150,21 @@ def onnx2nnet(onnxFile, inputMins=None, inputMaxes=None, means=None, ranges=None
         # Print statements
         print("Converted ONNX model at %s"%onnxFile)
         print("    to an NNet model at %s"%nnetFile)
+
+        print("inputMins:", inputMins)
+        print("inputMaxes:", inputMaxes)
         
         # Write NNet file
         writeNNet(weights,biases,inputMins,inputMaxes,means,ranges,nnetFile)
         
     # Something went wrong, so don't write the NNet file
     else:
+        if not outputName==inputName:
+            print("outputName!=inputName, outputName=", outputName, ", inputName=", inputName)
+        if not len(weights) > 0:
+            print("len(weights)= ",len(weights))
+        if not len(weights)==len(biases):
+            print("len(weights)!=len(biases), len(weights)= ", len(weights), ", len(biases)= ", len(biases))
         print("Could not write NNet file!")
         
 if __name__ == '__main__':

@@ -43,6 +43,8 @@ def writeNNet(weights,biases,inputMins,inputMaxes,means,ranges,fileName):
         inputSize = weights[0].shape[1]
         outputSize = len(biases[-1])
         maxLayerSize = inputSize
+        print("numLayers: ", numLayers)
+        print("inputSize: ", inputSize)
         
         # Find maximum size of any hidden layer
         for b in biases:
